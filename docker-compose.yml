@@ -1,0 +1,21 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      # 公开的本地开发凭据，不可用于生产环境。
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: minigame
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  mysql_data:
+
