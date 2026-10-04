@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import auth, bag, health, player, shop
+from app.routers import auth, bag, game, health, player, shop
 from app.schemas import ErrorResponse
 
 
@@ -57,3 +57,4 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(player.router, prefix="/api/v1")
 app.include_router(shop.router, prefix="/api/v1")
 app.include_router(bag.router, prefix="/api/v1")
+app.include_router(game.router, prefix="/api/v1")

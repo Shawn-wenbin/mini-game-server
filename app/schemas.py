@@ -86,6 +86,35 @@ class BagResponse(BaseModel):
     data: list[BagItem]
 
 
+class GameResultRequest(BaseModel):
+    # 与 MySQL 的有符号 INT 范围一致，避免合法请求在写入时溢出。
+    score: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+
+
+class GameResultData(BaseModel):
+    score: int
+    high_score: int
+    new_record: bool
+
+
+class GameResultResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: GameResultData
+
+
+class RankingItem(BaseModel):
+    rank: int
+    username: str
+    score: int
+
+
+class RankingsResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: list[RankingItem]
+
+
 class ErrorResponse(BaseModel):
     code: int
     message: str

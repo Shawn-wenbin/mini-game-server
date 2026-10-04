@@ -30,7 +30,7 @@ def db_engine(tmp_path, monkeypatch) -> Iterator[Engine]:
 
 @pytest.fixture
 def client(db_engine: Engine, monkeypatch) -> Iterator[TestClient]:
-    # 保留实际 get_db 的异常处理，以验证购买失败时的回滚和 503 响应。
+    # 保留实际 get_db 的异常处理，以验证数据库失败时的回滚和 503 响应。
     monkeypatch.setattr(
         database, "SessionLocal", sessionmaker(bind=db_engine, expire_on_commit=False)
     )

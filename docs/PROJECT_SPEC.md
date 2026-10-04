@@ -804,6 +804,7 @@ Purpose:
 heartbeat
 disconnect
 reconnect
+玩家login后主动向client发送一条notice消息，数据类似Welcom这种
 ```
 
 Minimal behavior:

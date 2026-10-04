@@ -1,6 +1,6 @@
 # MiniGameServer
 
-为 `MiniGameClient`（Cocos2d-x + Lua）提供真实 HTTP、FastAPI 和 MySQL 持久化的本地联调环境。目前实现 **Server Phase 1 + Phase 2**：健康检查、用户名登录、当前玩家、静态商品列表、购买和背包，以及 `players`、`inventory_items` 两张表。Phase 3 的成绩提交、排行榜和后续 WebSocket 尚未实现。
+为 `MiniGameClient`（Cocos2d-x + Lua）提供真实 HTTP、FastAPI 和 MySQL 持久化的本地联调环境。目前实现 **Server Phase 1 至 Phase 3**：健康检查、用户名登录、当前玩家、静态商品列表、购买、背包、成绩提交和排行榜，以及 `players`、`inventory_items` 两张表。Phase 4 的 WebSocket 尚未实现。
 
 ## 环境要求
 
@@ -194,6 +194,59 @@ Authorization: Bearer dev-1
 
 新玩家没有库存时返回 `{"code":0,"message":"ok","data":[]}`。物品名称来自静态商品配置；手动写入数据库且配置中不存在的物品以 `Unknown` 显示。
 
+## Phase 3 API 契约
+
+### POST /api/v1/game/result
+
+需要 `Authorization: Bearer <登录返回的 token>`，请求头 `Content-Type: application/json`。请求：
+
+```json
+{"score":27}
+```
+
+`score` 必须为非负整数，不接受字符串、小数或布尔值。最大值为 `2147483647`，与现有 MySQL `players.high_score` 的有符号 INT 范围一致；这是存储限制，不是反作弊规则。缺失、类型或范围错误返回 HTTP `422/code=422`，不修改最高分。
+
+当玩家原最高分小于 27 时，成功返回 HTTP `200`：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {"score": 27, "high_score": 27, "new_record": true}
+}
+```
+
+再次提交相同或更低分数，例如 10：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {"score": 10, "high_score": 27, "new_record": false}
+}
+```
+
+`score` 是本次提交的分数，`high_score` 是保存的最高分。只有严格超过旧最高分时 `new_record=true`；新玩家提交 0 分不会创造纪录。鉴权和数据库错误沿用 HTTP `401/code=2001`、`503/code=503` 的公共响应。
+
+提交时加锁重新读取当前玩家，再比较并更新最高分；一次提交完成事务，数据库异常回滚。同一玩家并发提交不会用较低分覆盖已保存的较高分。接口不奖励金币或钻石、不改变等级或背包，也不保存每局成绩历史。重复提交同分不会重复创造纪录。
+
+### GET /api/v1/rankings?limit=20
+
+公开读取，无需鉴权，无请求体。`limit` 默认 20，范围 1～100，类型或范围错误返回 HTTP `422/code=422`。返回所有玩家中的前 `limit` 名，按 `high_score DESC, id ASC` 排序；同分玩家按 ID 先后占据连续名次。未提交成绩的玩家也参与排名，分数为 0。
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {"rank": 1, "username": "alice", "score": 100},
+    {"rank": 2, "username": "bob", "score": 80}
+  ]
+}
+```
+
+没有玩家时返回 `{"code":0,"message":"ok","data":[]}`。数据库查询失败返回 HTTP `503/code=503`。
+
 ## curl 验证
 
 API 启动后，在另一个终端执行：
@@ -265,7 +318,45 @@ docker compose exec -T db mysql -uroot -proot minigame -e \
 
 全新玩家应先返回空背包；购买后余额为 900、物品 2001 的数量为 1；无效商品返回 `404/code=1002`，不改变数据。重复购买后应为 800/2；耗尽金币后再购买应返回 `400/code=1001`。重启 API，再请求 `/player/me`、`/bag` 并查询 MySQL，数据应保持一致。同名账号不会重置，因此重复验证时请换用新用户名或按实际余额判断结果。
 
-也可在 Swagger 中登录并 `Authorize`，依次调用商品列表、购买和背包。`/openapi.json` 应只有 Phase 1 + Phase 2 的六个应用路径，不包含 `/api/v1/game/result` 或 `/api/v1/rankings`。
+也可在 Swagger 中登录并 `Authorize`，依次调用商品列表、购买和背包。
+
+Phase 3 验证先登录新玩家，将 `TOKEN` 替换为登录返回的实际 token：
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"phase3_demo"}'
+
+TOKEN=dev-1
+
+curl -i -X POST http://127.0.0.1:8000/api/v1/game/result \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"score":27}'
+
+curl -i -X POST http://127.0.0.1:8000/api/v1/game/result \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"score":10}'
+
+curl -i -X POST http://127.0.0.1:8000/api/v1/game/result \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"score":-1}'
+
+curl -i http://127.0.0.1:8000/api/v1/player/me \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -i 'http://127.0.0.1:8000/api/v1/rankings?limit=20'
+curl -i 'http://127.0.0.1:8000/api/v1/rankings?limit=0'
+
+docker compose exec -T db mysql -uroot -proot minigame -e \
+  "SELECT id, username, high_score, gold, diamond FROM players WHERE username='phase3_demo'; SELECT id, username, high_score FROM players ORDER BY high_score DESC, id ASC LIMIT 20;"
+```
+
+全新玩家提交 27 后应返回 `new_record=true/high_score=27`；再提交 10 应返回 `new_record=false/high_score=27`；负分和 `limit=0` 返回 `422`。登录另一玩家并提交不同分数，检查排行榜顺序；同分时 ID 较小的玩家在前。同名账号不会重置，重复验证请换新用户名。
+
+重启 API 后，再次登录、调用 `/player/me`、查询排行榜和 MySQL，最高分应保持不变。Swagger 可直接读取排行榜；成绩提交需先登录并 `Authorize`。`/openapi.json` 应只有 Phase 1 至 Phase 3 的八个应用路径，代码中没有注册 WebSocket 路由。
 
 ## 自动化测试
 
@@ -274,11 +365,11 @@ uv sync --locked
 uv run pytest
 ```
 
-测试使用 FastAPI TestClient，并运行实际的启动建表和关闭生命周期。每个测试使用独立 SQLite 文件，启用外键；测试后清理连接，不会修改开发 MySQL 数据。覆盖 Phase 1 原有行为、静态商品、购买后的持久化、库存累加、余额恰好足够/不足、无效商品与参数、三个新增接口的鉴权、空背包、多物品顺序、玩家隔离，以及只注册 Phase 1 + Phase 2 接口。
+测试使用 FastAPI TestClient，并运行实际的启动建表和关闭生命周期。每个测试使用独立 SQLite 文件，启用外键；测试后清理连接，不会修改开发 MySQL 数据。覆盖 Phase 1、Phase 2 原有行为，以及成绩提交的持久化、相同/较低/零分、INT 边界、非法分数、鉴权、玩家隔离、玩家与排行榜刷新，排行榜的空列表、排序、同分次序、默认数量、数量上下界和非法参数；同时确认只有八个应用路径，未注册 WebSocket。
 
-提交失败测试先执行 `flush()`，再模拟提交异常，通过独立 Session 确认金币和库存同时回滚，并验证实际 `get_db` 返回 `503`。SQLite 测试不能验证 MySQL 行锁，需要通过真实 MySQL 另行验证并发购买。
+提交失败测试先执行 `flush()`，再模拟提交异常，通过独立 Session 确认金币、库存或最高分的修改被回滚，并验证实际 `get_db` 返回 `503`；另有排行榜查询失败测试。SQLite 测试不能验证 MySQL 行锁，需要通过真实 MySQL 另行验证并发购买和成绩提交。
 
-当前锁定的 Starlette 在使用 httpx 的 TestClient 时会发出一条弃用提示；44 个测试均通过。项目保留规格要求的 httpx，未隐藏这条提示。
+当前锁定的 Starlette 在使用 httpx 的 TestClient 时会发出一条弃用提示。项目保留规格要求的 httpx，未隐藏这条提示。
 
 ## Phase 1 验证记录（2026-10-04）
 
@@ -298,6 +389,17 @@ uv run pytest
 - 验证结束后已停止测试 API 进程，并清理仅本次创建的三个测试账号及其三条库存记录。
 - 未验证：MiniGameClient 实际端到端联调；提交失败回滚通过 SQLite 自动化测试模拟，未对真实 MySQL 注入数据库故障。
 
+## Phase 3 验证记录（2026-10-04）
+
+- 已验证：`uv run --locked pytest`，74 passed；保留一条已有的 Starlette TestClient 弃用提示。
+- 已验证：真实 FastAPI 进程连接 MySQL 8.4.11；HTTP 检查零分、新纪录、同分、低分、非法分数、鉴权、公开排行榜、数量限制及同分 ID 顺序；curl 检查成绩提交与排行榜响应，Swagger 页面可访问。
+- 已验证：通过独立 SQLAlchemy Session 和 MySQL 命令行查询核对最高分，资产与背包没有改变，数据库仍然只有原有两张表。
+- 已验证：同一玩家 12 个并发成绩请求全部成功，最终 MySQL 最高分为请求最大值 900，没有被较低分覆盖。
+- 已验证：重启 API 后，三名测试玩家登录与 `/player/me` 返回相同 ID、token 及最高分；排行榜和直接数据库查询结果一致。
+- 已验证：OpenAPI 只有八个 Phase 1 至 Phase 3 应用路径，自动化测试确认未注册 WebSocket 路由。
+- 验证结束后已停止测试 API 进程，并清理仅本次创建的三个临时玩家；与验证前快照对照，原有玩家及库存数据未改变。
+- 未验证：MiniGameClient 实际端到端联调；数据库故障回滚和排行榜查询失败通过 SQLite 自动化测试模拟，未对真实 MySQL 注入故障。
+
 ## 数据库结构
 
 只创建以下两张表：
@@ -305,7 +407,7 @@ uv run pytest
 - `players`：`id`（自增主键）、`username`（非空、最长 50、唯一）、`level`（默认 1）、`gold`（默认 1000）、`diamond`（默认 100）、`high_score`（默认 0）、`created_at`、`updated_at`。
 - `inventory_items`：`id`（自增主键）、`player_id`（外键指向 `players.id`）、`item_id`、`count`（默认 0）、`created_at`、`updated_at`；`(player_id, item_id)` 唯一。
 
-所有字段均非空。时间字段由数据库初始化，`updated_at` 在 SQLAlchemy 更新记录时刷新。登录不会创建背包记录；Phase 2 购买修改 `players.gold` 并新增/更新 `inventory_items.count`，没有新增表、列或数据库迁移。
+所有字段均非空。时间字段由数据库初始化，`updated_at` 在 SQLAlchemy 更新记录时刷新。登录不会创建背包记录；Phase 2 购买修改 `players.gold` 并新增/更新 `inventory_items.count`；Phase 3 只在创造新纪录时更新已有的 `players.high_score`（及 `updated_at`），没有新增表、列或数据库迁移。
 
 ## MiniGameClient 接入
 
@@ -316,6 +418,8 @@ uv run pytest
 - 购买成功后用 `data.gold` 更新 `PlayerModel`，用 `data.item` 更新对应库存，或再调用 `/player/me` 和 `/bag` 刷新。`BagController` 使用 `GET /bag` 的 `data` 展示物品名称和总数量，空数组表示空背包。
 - `400/code=1001` 表示金币不足；`404/code=1002` 表示商品不存在。失败时不要本地预扣金币或添加物品；数据库不可用时可提示稍后刷新。
 - 客户端同时处理 HTTP 状态码和应用 `code`；遇到 `401/code=2001` 时重新执行开发登录。
+- `ResultView` 在游戏结束时携带 token 发送 `POST /game/result`，请求 JSON 为 `{"score":<本局整数分数>}`；用 `data.high_score` 更新 `PlayerModel`，用 `data.new_record` 展示是否刷新纪录。
+- `RankView` 发送 `GET /rankings?limit=20`，无需 token，按响应 `data` 的顺序展示 `rank`、`username`、`score`。成绩提交成功后再刷新排行榜，空数组表示暂无玩家。
 - 真机上的 `127.0.0.1` 指向真机自身。局域网联调时用 `uv run uvicorn app.main:app --reload --host 0.0.0.0` 启动，再将客户端地址改为开发电脑的局域网 IP。
 
 ## 开发鉴权与简化
@@ -324,4 +428,4 @@ uv run pytest
 
 仅按用户名登录，没有密码。`dev-{player_id}` 直接暴露玩家 ID，可以伪造，没有签名或有效期。不能把本服务作为生产鉴权系统，也不要暴露到公网。
 
-架构仅为路由 → 每请求同步 SQLAlchemy Session → MySQL。商品配置静态，每次购买一件，Skin A 也按普通物品累加；没有支付或道具使用逻辑。购买接口没有幂等键，客户端重复发送会重复购买，超时后应先查询玩家和背包确认状态。没有服务/仓储层、迁移、JWT/OAuth 或生产部署设施。当前完成范围仅限 Phase 1 + Phase 2；Phase 3 须明确请求后再实现。
+架构仅为路由 → 每请求同步 SQLAlchemy Session → MySQL。商品配置静态，每次购买一件，Skin A 也按普通物品累加；没有支付或道具使用逻辑。购买接口没有幂等键，客户端重复发送会重复购买，超时后应先查询玩家和背包确认状态。成绩直接信任客户端提交，不做反作弊或对局校验；排行榜只查询玩家最高分，没有赛季、分页或成绩历史表。没有服务/仓储层、迁移、JWT/OAuth 或生产部署设施。当前完成范围仅限 Phase 1 至 Phase 3；Phase 4 WebSocket 须明确请求后再实现。

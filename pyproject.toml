@@ -1,7 +1,7 @@
 [project]
 name = "minigame-server"
 version = "0.1.0"
-description = "MiniGameClient 本地联调用的 Phase 1 + Phase 2 后端"
+description = "MiniGameClient 本地联调用的 Phase 1 至 Phase 3 后端"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
