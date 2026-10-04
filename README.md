@@ -1,6 +1,8 @@
 # MiniGameServer
 
-为 `MiniGameClient`（Cocos2d-x + Lua）提供真实 HTTP、FastAPI 和 MySQL 持久化的本地联调环境。目前实现 **Server Phase 1 至 Phase 3**：健康检查、用户名登录、当前玩家、静态商品列表、购买、背包、成绩提交和排行榜，以及 `players`、`inventory_items` 两张表。Phase 4 的 WebSocket 尚未实现。
+为 `MiniGameClient`（Cocos2d-x + Lua）提供真实 HTTP、FastAPI 和 MySQL 持久化的本地联调环境。目前实现 **Server Phase 1 至 Phase 4**：健康检查、用户名登录、当前玩家、静态商品列表、购买、背包、成绩提交、排行榜，以及 WebSocket 欢迎通知和心跳训练。数据库保持 `players`、`inventory_items` 两张表。
+
+客户端研发请直接阅读 [完整交互契约](docs/CLIENT_API_CONTRACT.md)，其中包含全部 HTTP 请求/响应、鉴权与错误、WebSocket 消息格式、退出与重连恢复、购买超时处理及联调步骤。
 
 ## 环境要求
 
@@ -247,6 +249,36 @@ Authorization: Bearer dev-1
 
 没有玩家时返回 `{"code":0,"message":"ok","data":[]}`。数据库查询失败返回 HTTP `503/code=503`。
 
+## Phase 4 WebSocket 契约
+
+HTTP 登录成功后，客户端使用返回的 token 连接：
+
+```text
+ws://127.0.0.1:8000/api/v1/ws?token=dev-1
+```
+
+WebSocket 使用查询参数 token，不读取 HTTP Bearer 头。服务端握手后鉴权，主动发送一次欢迎通知，客户端收到 notice 才算鉴权成功：
+
+```json
+{"type":"notice","code":0,"message":"ok","data":{"player_id":1,"text":"Welcome, alice!"}}
+```
+
+客户端使用 JSON 文本帧发送心跳，服务端逐条响应：
+
+```json
+{"type":"ping"}
+```
+
+```json
+{"type":"pong","code":0,"message":"ok","data":null}
+```
+
+非法文本消息返回 `type=error/code=422`，连接保持可用；token 无效返回 `type=error/code=2001` 后以 `1008` 关闭；鉴权数据库故障返回 `type=error/code=503` 后以 `1011` 关闭；二进制帧返回 `type=error/code=422` 后以 `1003` 关闭。错误的 `data` 均为 `null`。
+
+服务端没有应用心跳空闲超时，断开和重连由客户端管理。建议客户端每 10 秒发一次 ping，5 秒没有 pong 时关闭旧连接并重连。每次重连都会重新收到欢迎通知，随后必须通过 HTTP `/player/me` 和 `/bag` 刷新状态；没有离线通知补发或资产推送。
+
+鉴权查询在线程池运行，短 Session 在欢迎通知前关闭；连接和心跳不持有数据库连接，不修改数据库。普通 HTTP 接口的契约保持不变。WebSocket 不显示在 Swagger 的 HTTP 接口列表中，验证脚本见 [客户端契约第 15 节](docs/CLIENT_API_CONTRACT.md#15-联调验收与命令)。
+
 ## curl 验证
 
 API 启动后，在另一个终端执行：
@@ -356,7 +388,7 @@ docker compose exec -T db mysql -uroot -proot minigame -e \
 
 全新玩家提交 27 后应返回 `new_record=true/high_score=27`；再提交 10 应返回 `new_record=false/high_score=27`；负分和 `limit=0` 返回 `422`。登录另一玩家并提交不同分数，检查排行榜顺序；同分时 ID 较小的玩家在前。同名账号不会重置，重复验证请换新用户名。
 
-重启 API 后，再次登录、调用 `/player/me`、查询排行榜和 MySQL，最高分应保持不变。Swagger 可直接读取排行榜；成绩提交需先登录并 `Authorize`。`/openapi.json` 应只有 Phase 1 至 Phase 3 的八个应用路径，代码中没有注册 WebSocket 路由。
+重启 API 后，再次登录、调用 `/player/me`、查询排行榜和 MySQL，最高分应保持不变。Swagger 可直接读取排行榜；成绩提交需先登录并 `Authorize`。`/openapi.json` 仍只有 Phase 1 至 Phase 3 的八个 HTTP 应用路径；另外注册了 `/api/v1/ws` WebSocket 路由。
 
 ## 自动化测试
 
@@ -365,7 +397,7 @@ uv sync --locked
 uv run pytest
 ```
 
-测试使用 FastAPI TestClient，并运行实际的启动建表和关闭生命周期。每个测试使用独立 SQLite 文件，启用外键；测试后清理连接，不会修改开发 MySQL 数据。覆盖 Phase 1、Phase 2 原有行为，以及成绩提交的持久化、相同/较低/零分、INT 边界、非法分数、鉴权、玩家隔离、玩家与排行榜刷新，排行榜的空列表、排序、同分次序、默认数量、数量上下界和非法参数；同时确认只有八个应用路径，未注册 WebSocket。
+测试使用 FastAPI TestClient，并运行实际的启动建表和关闭生命周期。每个测试使用独立 SQLite 文件，启用外键；测试后清理连接，不会修改开发 MySQL 数据。覆盖 Phase 1、Phase 2 原有行为，以及成绩提交的持久化、相同/较低/零分、INT 边界、非法分数、鉴权、玩家隔离、玩家与排行榜刷新，排行榜的空列表、排序、同分次序、默认数量、数量上下界和非法参数；同时确认八个 HTTP 应用路径及 WebSocket 路由。Phase 4 覆盖主动欢迎、连续心跳、非法 token、非法文本/二进制消息、数据库失败、多玩家连接、断开重连和 HTTP 状态恢复，并检查鉴权后归还数据库连接、心跳不查库。
 
 提交失败测试先执行 `flush()`，再模拟提交异常，通过独立 Session 确认金币、库存或最高分的修改被回滚，并验证实际 `get_db` 返回 `503`；另有排行榜查询失败测试。SQLite 测试不能验证 MySQL 行锁，需要通过真实 MySQL 另行验证并发购买和成绩提交。
 
@@ -400,6 +432,16 @@ uv run pytest
 - 验证结束后已停止测试 API 进程，并清理仅本次创建的三个临时玩家；与验证前快照对照，原有玩家及库存数据未改变。
 - 未验证：MiniGameClient 实际端到端联调；数据库故障回滚和排行榜查询失败通过 SQLite 自动化测试模拟，未对真实 MySQL 注入故障。
 
+## Phase 4 验证记录（2026-10-04）
+
+- 已验证：`uv run --locked pytest`，100 passed；保留一条已有的 Starlette TestClient 弃用提示。
+- 已验证：真实 FastAPI 进程连接 MySQL 8.4.11，WebSocket 主动欢迎、多人独立连接、连续心跳、错误文本后继续心跳、缺失/非法 token 错误与 `1008` 关闭、二进制错误与 `1003` 关闭均符合契约。
+- 已验证：断开期间通过 HTTP 购买和提交成绩，重连再次收到欢迎，再通过 `/player/me` 和 `/bag` 恢复为 900 金币、最高分 27、物品 2001 数量 1；独立 MySQL 查询与 HTTP 一致。
+- 已验证：WebSocket 前后的玩家及库存快照完全一致，数据库仍只有两张表；自动化测试检查鉴权后立即归还连接、心跳不查库、数据库异常时释放连接并以 `1011` 关闭。
+- 已验证：客户端契约中的 25 个 JSON 示例可解析，文档内的 WebSocket 验证脚本在真实服务上完成欢迎、心跳、重连及 HTTP 状态恢复；Swagger 和 OpenAPI 可访问，HTTP 路径仍为八个。
+- 验证结束后已停止本次临时 API 进程，清理仅本次创建的三个测试玩家及其一条库存；主联调脚本通过快照确认此前已有数据未改变，文档示例账号也已单独清理。
+- 未验证：MiniGameClient 真机端到端联调、客户端的心跳超时和网络故障退避；数据库鉴权故障通过自动化测试模拟，未向真实 MySQL 注入故障。
+
 ## 数据库结构
 
 只创建以下两张表：
@@ -420,6 +462,7 @@ uv run pytest
 - 客户端同时处理 HTTP 状态码和应用 `code`；遇到 `401/code=2001` 时重新执行开发登录。
 - `ResultView` 在游戏结束时携带 token 发送 `POST /game/result`，请求 JSON 为 `{"score":<本局整数分数>}`；用 `data.high_score` 更新 `PlayerModel`，用 `data.new_record` 展示是否刷新纪录。
 - `RankView` 发送 `GET /rankings?limit=20`，无需 token，按响应 `data` 的顺序展示 `rank`、`username`、`score`。成绩提交成功后再刷新排行榜，空数组表示暂无玩家。
+- 登录成功后使用 `ws://127.0.0.1:8000/api/v1/ws?token=<实际 token>` 建连，收到 notice 后启动 JSON ping/pong 心跳；重连收到 notice 后，通过 HTTP `/player/me` 和 `/bag` 替换本地状态。退出账号时关闭连接并取消心跳和重连任务。
 - 真机上的 `127.0.0.1` 指向真机自身。局域网联调时用 `uv run uvicorn app.main:app --reload --host 0.0.0.0` 启动，再将客户端地址改为开发电脑的局域网 IP。
 
 ## 开发鉴权与简化
@@ -428,4 +471,4 @@ uv run pytest
 
 仅按用户名登录，没有密码。`dev-{player_id}` 直接暴露玩家 ID，可以伪造，没有签名或有效期。不能把本服务作为生产鉴权系统，也不要暴露到公网。
 
-架构仅为路由 → 每请求同步 SQLAlchemy Session → MySQL。商品配置静态，每次购买一件，Skin A 也按普通物品累加；没有支付或道具使用逻辑。购买接口没有幂等键，客户端重复发送会重复购买，超时后应先查询玩家和背包确认状态。成绩直接信任客户端提交，不做反作弊或对局校验；排行榜只查询玩家最高分，没有赛季、分页或成绩历史表。没有服务/仓储层、迁移、JWT/OAuth 或生产部署设施。当前完成范围仅限 Phase 1 至 Phase 3；Phase 4 WebSocket 须明确请求后再实现。
+架构仅为路由 → 每请求同步 SQLAlchemy Session → MySQL。商品配置静态，每次购买一件，Skin A 也按普通物品累加；没有支付或道具使用逻辑。购买接口没有幂等键，客户端重复发送会重复购买，超时后应先查询玩家和背包确认状态。成绩直接信任客户端提交，不做反作弊或对局校验；排行榜只查询玩家最高分，没有赛季、分页或成绩历史表。WebSocket 仅用于欢迎通知和心跳训练，没有实时游戏同步、连接会话、消息补发或服务端自动重连。没有服务/仓储层、迁移、JWT/OAuth 或生产部署设施。

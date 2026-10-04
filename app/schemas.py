@@ -119,3 +119,32 @@ class ErrorResponse(BaseModel):
     code: int
     message: str
     data: None = None
+
+
+class WebSocketPing(BaseModel):
+    type: Literal["ping"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WebSocketNoticeData(BaseModel):
+    player_id: int
+    text: str
+
+
+class WebSocketNotice(BaseModel):
+    type: Literal["notice"] = "notice"
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: WebSocketNoticeData
+
+
+class WebSocketPong(BaseModel):
+    type: Literal["pong"] = "pong"
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: None = None
+
+
+class WebSocketError(ErrorResponse):
+    type: Literal["error"] = "error"

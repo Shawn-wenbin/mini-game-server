@@ -14,6 +14,13 @@ bearer_auth = HTTPBearer(
 )
 
 
+def parse_dev_token(token: str) -> int | None:
+    # DEV ONLY / NOT PRODUCTION AUTH：仅解析玩家 ID，没有签名或有效期。
+    match = re.fullmatch(r"dev-([1-9][0-9]{0,9})", token)
+    player_id = int(match[1]) if match else 0
+    return player_id if 0 < player_id <= 2_147_483_647 else None
+
+
 def get_current_player(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(bearer_auth)
@@ -22,9 +29,8 @@ def get_current_player(
 ) -> Player:
     # DEV ONLY / NOT PRODUCTION AUTH：玩家 ID 可被任意伪造，仅用于本地联调。
     token = credentials.credentials if credentials else ""
-    match = re.fullmatch(r"dev-([1-9][0-9]{0,9})", token)
-    player_id = int(match[1]) if match else 0
-    player = db.get(Player, player_id) if 0 < player_id <= 2_147_483_647 else None
+    player_id = parse_dev_token(token)
+    player = db.get(Player, player_id) if player_id is not None else None
     if player is None:
         raise HTTPException(
             status_code=401,
