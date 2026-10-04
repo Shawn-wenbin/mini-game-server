@@ -4,10 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
+import app.database as database
 import app.main as main
-from app.database import get_db
 
 
 @pytest.fixture
@@ -29,17 +29,11 @@ def db_engine(tmp_path, monkeypatch) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def client(db_engine: Engine) -> Iterator[TestClient]:
-    test_session = sessionmaker(bind=db_engine, expire_on_commit=False)
-
-    def override_db() -> Iterator[Session]:
-        with test_session() as session:
-            yield session
-
-    main.app.dependency_overrides[get_db] = override_db
-    try:
-        # 使用上下文管理器，实际执行 startup 建表与 shutdown 生命周期。
-        with TestClient(main.app) as test_client:
-            yield test_client
-    finally:
-        main.app.dependency_overrides.clear()
+def client(db_engine: Engine, monkeypatch) -> Iterator[TestClient]:
+    # 保留实际 get_db 的异常处理，以验证购买失败时的回滚和 503 响应。
+    monkeypatch.setattr(
+        database, "SessionLocal", sessionmaker(bind=db_engine, expire_on_commit=False)
+    )
+    # 使用上下文管理器，实际执行 startup 建表与 shutdown 生命周期。
+    with TestClient(main.app) as test_client:
+        yield test_client

@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class HealthResponse(BaseModel):
@@ -39,6 +39,51 @@ class PlayerResponse(BaseModel):
     code: Literal[0] = 0
     message: Literal["ok"] = "ok"
     data: PlayerData
+
+
+class ShopProduct(BaseModel):
+    id: int
+    name: str
+    price: int
+    item_id: int
+
+
+class ShopProductsResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: list[ShopProduct]
+
+
+class PurchaseRequest(BaseModel):
+    product_id: Annotated[int, Field(strict=True, gt=0)]
+
+
+class PurchaseItem(BaseModel):
+    item_id: int
+    count: int
+
+
+class PurchaseData(BaseModel):
+    gold: int
+    item: PurchaseItem
+
+
+class PurchaseResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: PurchaseData
+
+
+class BagItem(BaseModel):
+    item_id: int
+    name: str
+    count: int
+
+
+class BagResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: list[BagItem]
 
 
 class ErrorResponse(BaseModel):

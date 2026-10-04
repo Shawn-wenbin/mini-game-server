@@ -8,13 +8,13 @@ from starlette.exceptions import HTTPException
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import auth, health, player
+from app.routers import auth, bag, health, player, shop
 from app.schemas import ErrorResponse
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Phase 1 只自动创建缺失的表，不执行数据库迁移。
+    # 只自动创建缺失的表，不执行数据库迁移。
     try:
         Base.metadata.create_all(bind=engine)
         yield
@@ -55,3 +55,5 @@ async def handle_validation_error(
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(player.router, prefix="/api/v1")
+app.include_router(shop.router, prefix="/api/v1")
+app.include_router(bag.router, prefix="/api/v1")
