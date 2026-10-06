@@ -64,8 +64,10 @@ async def websocket_training(websocket: WebSocket, token: str | None = None) -> 
         while True:
             event = await websocket.receive()
             if event["type"] == "websocket.disconnect":
+                logger.info( f"[WS {websocket.client} ] disconnect event" )
                 return
             if event.get("text") is None:
+                logger.info( f"[WS {websocket.client} ] received binary frame, rejecting" )
                 await websocket.send_json(
                     WebSocketError(
                         code=422, message="binary websocket messages are not supported"
@@ -73,17 +75,21 @@ async def websocket_training(websocket: WebSocket, token: str | None = None) -> 
                 )
                 await websocket.close(code=1003, reason="unsupported data")
                 return
+            text = event[ "text" ]
+            logger.info( f"[WS {websocket.client} ] RECV {_safe_truncate(text)} " )
             try:
-                WebSocketPing.model_validate_json(event["text"])
+                WebSocketPing.model_validate_json(text)
             except ValidationError:
-                await websocket.send_json(
-                    WebSocketError(
-                        code=422,
-                        message='invalid websocket message; expected {"type":"ping"}',
-                    ).model_dump()
+                err = WebSocketError(
+                    code= 422 ,
+                    message= 'invalid websocket message; expected {"type":"ping"}' ,
                 )
+                logger.info( f"[WS {websocket.client} ] SEND {err.model_dump_json()} " )
+                await websocket.send_json(err.model_dump()) 
                 continue
-            await websocket.send_json(WebSocketPong().model_dump())
+            pong = WebSocketPong()
+            logger.info( f"[WS {websocket.client} ] SEND {pong.model_dump_json()} " )
+            await websocket.send_json(pong.model_dump())
     except WebSocketDisconnect:
         # 正常断开或发送期间掉线均结束本次连接；重连由客户端发起。
         return
