@@ -76,7 +76,7 @@ async def websocket_training(websocket: WebSocket, token: str | None = None) -> 
                 await websocket.close(code=1003, reason="unsupported data")
                 return
             text = event[ "text" ]
-            logger.info( f"[WS {websocket.client} ] RECV {_safe_truncate(text)} " )
+            logger.info( f"[WS {websocket.client} ] RECV {(text)} " )
             try:
                 WebSocketPing.model_validate_json(text)
             except ValidationError:

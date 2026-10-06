@@ -34,6 +34,12 @@ from starlette.responses import StreamingResponse
 _logger = logging.getLogger("app.http")
 _MAX_LOG_BODY = 4096  # 超过 4KB 的 body 截断，避免刷爆 Terminal
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 def _safe_truncate(data: str, max_len: int = _MAX_LOG_BODY) -> str:
     if len(data) <= max_len:
         return data
