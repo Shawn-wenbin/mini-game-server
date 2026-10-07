@@ -115,6 +115,17 @@ class RankingsResponse(BaseModel):
     data: list[RankingItem]
 
 
+class LobbyRewardClaimData(BaseModel):
+    gold: int
+    reward_gold: int
+
+
+class LobbyRewardClaimResponse(BaseModel):
+    code: Literal[0] = 0
+    message: Literal["ok"] = "ok"
+    data: LobbyRewardClaimData
+
+
 class ErrorResponse(BaseModel):
     code: int
     message: str
